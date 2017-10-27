@@ -1,3 +1,6 @@
+'''Script to compute mean vector for training set
+ of the cifar-10 dataset python version.
+'''
 from argparse import ArgumentParser
 import numpy as np
 import pickle
@@ -11,11 +14,11 @@ outfile_name = 'cifar_mean.npy'
 
 
 def build_parser():
-    parser = ArgumentParser()
+    parser = ArgumentParser(description=__doc__)
 
     parser.add_argument(
         '-d', '--dataset-directory',
-        help='Directory containing cifar-10',
+        help='Directory containing cifar-10.',
         required=True
     )
 
