@@ -1,5 +1,7 @@
 from lasagne.layers import (
-    InputLayer, DenseLayer, get_all_params, get_all_param_values, get_output)
+    InputLayer, DenseLayer,
+    get_all_params, get_all_param_values,
+    set_all_param_values, get_output)
 from lasagne.objectives import categorical_crossentropy, categorical_accuracy
 from lasagne.nonlinearities import softmax
 from lasagne.updates import adam
@@ -135,6 +137,80 @@ def train_val_split(X, y, val_proportion=0.1):
     return train_X, train_y, val_X, val_y
 
 
+def make_training_function(
+        train_function, loss_function,
+        accuracy_function, network,
+        val_X, val_y):
+    def train_network(
+            train_X, train_y, initial_network_params,
+            print_train_info=True, plot_figures=True):
+
+        set_all_param_values(
+            network['output'],
+            initial_network_params
+        )
+
+        n_chunks = 50
+        train_chunks = list(zip(
+            np.split(train_X, n_chunks),
+            np.split(train_y, n_chunks)
+        ))
+        training_losses = []
+        validation_losses = []
+        validation_accuracies = []
+        min_val_loss = None
+
+        param_queue = PriorityQueue(maxsize=2)
+        for epoch in range(1, max_epochs):
+            training_loss = 0.
+            for X_chunk, y_chunk in train_chunks:
+                training_loss += train_function(X_chunk, y_chunk) / n_chunks
+
+            validation_loss = float(loss_function(val_X, val_y))
+            validation_accuracy = float(accuracy_function(val_X, val_y))
+
+            if print_train_info:
+                print('Epoch {}\n\ttrain loss: {}'.format(
+                    epoch, training_loss))
+                print('\tval loss: {}'.format(validation_loss))
+                print('\tval accuracy: {:.2f}%'.format(validation_accuracy))
+
+            training_losses.append(training_loss)
+            validation_losses.append(validation_loss)
+            validation_accuracies.append(validation_accuracy)
+
+            current_params = get_all_param_values(network['output'])
+            if param_queue.full():
+                param_queue.get()
+
+            param_queue.put((-validation_loss, current_params))
+
+            if min_val_loss is None or validation_loss <= min_val_loss:
+                min_val_loss = validation_loss
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+
+            if epochs_without_improvement == early_stopping_epochs:
+                print('Breaking due to early stopping!')
+                break
+
+        while param_queue.qsize() > 0:
+            key, best_params = param_queue.get()
+
+        if plot_figures:
+            plt.figure()
+            plt.plot(*zip(*enumerate(training_losses, 1)))
+            plt.plot(*zip(*enumerate(validation_losses, 1)))
+            plt.show()
+
+        return (
+            best_params, training_losses,
+            validation_losses, validation_accuracies
+        )
+    return train_network
+
+
 def main():
     args = build_parser().parse_args()
 
@@ -154,7 +230,7 @@ def main():
     network = build_network(input_var=input_var)
     prediction = get_output(network['output'])
     loss = categorical_crossentropy(prediction, target).mean()
-    accuracy = categorical_accuracy(prediction, target).mean()
+    accuracy = 100. * categorical_accuracy(prediction, target).mean()
 
     params = get_all_params(network['output'], trainable=True)
     updates = adam(loss, params)
@@ -172,60 +248,29 @@ def main():
         [input_var, target],
         accuracy
     )
+    train_network = make_training_function(
+        train_function, loss_function,
+        accuracy_function, network,
+        val_X, val_y
+    )
 
-    n_chunks = 50
-    train_chunks = list(zip(
-        np.split(train_X, n_chunks),
-        np.split(train_y, n_chunks)
-    ))
-    epoch_losses = []
-    validation_losses = []
-    min_val_loss = None
-    print_train_info = True
+    k = 4
+    initialisations = get_k_network_initialisations(k, input_var=input_var)
+    bootstraps = [
+        get_bootstrap(train_X, train_y)
+        for _ in range(k)
+    ]
+    ensembles = zip(initialisations, bootstraps)
 
-    param_queue = PriorityQueue(maxsize=2)
-    for epoch in range(1, max_epochs):
-        epoch_loss = 0.
-        for X_chunk, y_chunk in train_chunks:
-            epoch_loss += train_function(X_chunk, y_chunk) / n_chunks
-
-        validation_loss = float(loss_function(val_X, val_y))
-        validation_accuracy = float(accuracy_function(val_X, val_y) * 100.)
-
-        if print_train_info:
-            print('Epoch {}\n\ttrain loss: {}'.format(epoch, epoch_loss))
-            print('\tval loss: {}'.format(validation_loss))
-            print('\tval accuracy: {:.2f}%'.format(validation_accuracy))
-
-        epoch_losses.append(epoch_loss)
-        validation_losses.append(validation_loss)
-
-        current_params = get_all_param_values(network['output'])
-        if param_queue.full():
-            param_queue.get()
-
-        param_queue.put((-validation_loss, current_params))
-
-        if min_val_loss is None or validation_loss <= min_val_loss:
-            min_val_loss = validation_loss
-            epochs_without_improvement = 0
-        else:
-            epochs_without_improvement += 1
-
-        if epochs_without_improvement == early_stopping_epochs:
-            print('Breaking due to early stopping!')
-            break
-
-    while param_queue.qsize() > 0:
-        key, best_params = param_queue.get()
-    print(key)
-    print(np.min(validation_losses))
-    plt.figure()
-    plt.plot(*zip(*enumerate(epoch_losses, 1)))
-    plt.plot(*zip(*enumerate(validation_losses, 1)))
-    plt.show()
-    import IPython
-    IPython.embed()
+    # initial_network_params = get_all_param_values(network['output'])
+    for initialisation, bootstrap in ensembles:
+        (
+            best_params, training_losses,
+            validation_losses, validation_accuracies
+        ) = train_network(
+            *bootstrap, initialisation, False, False)
+        print(np.min(validation_losses))
+        print(np.max(validation_accuracies))
 
 
 if __name__ == '__main__':
