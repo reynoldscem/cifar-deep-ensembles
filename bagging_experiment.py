@@ -163,20 +163,52 @@ def main():
     ))
     epoch_losses = []
     validation_losses = []
+    min_val_loss = None
+    print_train_info = True
+
+    from queue import PriorityQueue
+    param_queue = PriorityQueue(maxsize=2)
     for epoch in range(1, 250):
         epoch_loss = 0.
         for X_chunk, y_chunk in train_chunks:
             epoch_loss += train_function(X_chunk, y_chunk) / n_chunks
 
-        epoch_losses.append(epoch_loss)
-        print('Epoch {}\n\ttrain loss: {}'.format(epoch, epoch_loss))
-
         validation_loss = float(loss_function(val_X, val_y))
         validation_accuracy = float(accuracy_function(val_X, val_y) * 100.)
-        print('\tval loss: {}'.format(validation_loss))
-        print('\tval accuracy: {:.2f}%'.format(validation_accuracy))
 
+        if print_train_info:
+            print('Epoch {}\n\ttrain loss: {}'.format(epoch, epoch_loss))
+            print('\tval loss: {}'.format(validation_loss))
+            print('\tval accuracy: {:.2f}%'.format(validation_accuracy))
+
+        epoch_losses.append(epoch_loss)
         validation_losses.append(validation_loss)
+
+        current_params = get_all_param_values(network['output'])
+        if param_queue.full():
+            param_queue.get()
+
+        param_queue.put((-validation_loss, current_params))
+
+        if min_val_loss is None or validation_loss <= min_val_loss:
+            min_val_loss = validation_loss
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+
+        if epochs_without_improvement == 10:
+            print('Breaking due to early stopping!')
+            break
+
+    while param_queue.qsize() > 0:
+        key, best_params = param_queue.get()
+    print(key)
+    print(np.min(validation_losses))
+    from matplotlib import pyplot as plt
+    plt.figure()
+    plt.plot(*zip(*enumerate(epoch_losses, 1)))
+    plt.plot(*zip(*enumerate(validation_losses, 1)))
+    plt.show()
     import IPython
     IPython.embed()
 
