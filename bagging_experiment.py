@@ -7,11 +7,18 @@ from lasagne.updates import adam
 from theano import tensor as T
 import theano
 
+from matplotlib import pyplot as plt
 from collections import OrderedDict
 from argparse import ArgumentParser
+from queue import PriorityQueue
 import numpy as np
 import pickle
 import os
+
+
+early_stopping_epochs = 10
+hidden_size = 1000
+max_epochs = 250
 
 
 def build_parser():
@@ -35,7 +42,7 @@ def build_parser():
 def build_network(
         input_var=None,
         batch_size=None, feature_dimensionality=3072,
-        hidden_size=1000, output_classes=10):
+        hidden_size=hidden_size, output_classes=10):
     network = OrderedDict()
 
     network['input'] = InputLayer(
@@ -57,6 +64,16 @@ def build_network(
     )
 
     return network
+
+
+def get_k_network_initialisations(k, *args, **kwargs):
+    params_list = []
+    for index in range(k):
+        network = build_network(*args, **kwargs)
+        params = get_all_param_values(network['output'])
+        params_list.append(params)
+
+    return params_list
 
 
 def get_bootstrap(*input_arrays):
@@ -166,9 +183,8 @@ def main():
     min_val_loss = None
     print_train_info = True
 
-    from queue import PriorityQueue
     param_queue = PriorityQueue(maxsize=2)
-    for epoch in range(1, 250):
+    for epoch in range(1, max_epochs):
         epoch_loss = 0.
         for X_chunk, y_chunk in train_chunks:
             epoch_loss += train_function(X_chunk, y_chunk) / n_chunks
@@ -196,7 +212,7 @@ def main():
         else:
             epochs_without_improvement += 1
 
-        if epochs_without_improvement == 10:
+        if epochs_without_improvement == early_stopping_epochs:
             print('Breaking due to early stopping!')
             break
 
@@ -204,7 +220,6 @@ def main():
         key, best_params = param_queue.get()
     print(key)
     print(np.min(validation_losses))
-    from matplotlib import pyplot as plt
     plt.figure()
     plt.plot(*zip(*enumerate(epoch_losses, 1)))
     plt.plot(*zip(*enumerate(validation_losses, 1)))
