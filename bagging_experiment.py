@@ -13,13 +13,14 @@ from matplotlib import pyplot as plt
 from collections import OrderedDict
 from argparse import ArgumentParser
 from queue import PriorityQueue
+from functools import reduce
 import numpy as np
 import pickle
 import os
 
 
 early_stopping_epochs = 10
-hidden_size = 1000
+hidden_size = 100
 max_epochs = 250
 
 
@@ -192,7 +193,8 @@ def make_training_function(
                 epochs_without_improvement += 1
 
             if epochs_without_improvement == early_stopping_epochs:
-                print('Breaking due to early stopping!')
+                if print_train_info:
+                    print('Breaking due to early stopping!')
                 break
 
         while param_queue.qsize() > 0:
@@ -209,6 +211,24 @@ def make_training_function(
             validation_losses, validation_accuracies
         )
     return train_network
+
+
+def make_ens_predictor(network, pred_function, X, y):
+    def ensemble_prediction(parameter_list):
+        probability_list = []
+        for parameter_set in parameter_list:
+            set_all_param_values(
+                network['output'],
+                parameter_set
+            )
+            predicted_probs = pred_function(X)
+            probability_list.append(predicted_probs)
+        combined_probabilities = reduce(np.add, probability_list)
+        soft_vote = np.argmax(combined_probabilities, axis=1)
+        accuracy = 100. * np.mean(soft_vote == y)
+
+        return accuracy
+    return ensemble_prediction
 
 
 def main():
@@ -248,13 +268,20 @@ def main():
         [input_var, target],
         accuracy
     )
+    pred_function = theano.function(
+        [input_var],
+        prediction
+    )
+    ensemble_prediction = make_ens_predictor(
+        network, pred_function, val_X, val_y
+    )
     train_network = make_training_function(
         train_function, loss_function,
         accuracy_function, network,
         val_X, val_y
     )
 
-    k = 4
+    k = 32
     initialisations = get_k_network_initialisations(k, input_var=input_var)
     bootstraps = [
         get_bootstrap(train_X, train_y)
@@ -263,14 +290,27 @@ def main():
     ensembles = zip(initialisations, bootstraps)
 
     # initial_network_params = get_all_param_values(network['output'])
+
+    trained_parameters = []
     for initialisation, bootstrap in ensembles:
         (
             best_params, training_losses,
             validation_losses, validation_accuracies
         ) = train_network(
             *bootstrap, initialisation, False, False)
-        print(np.min(validation_losses))
-        print(np.max(validation_accuracies))
+        trained_parameters.append(best_params)
+        max_accuracy = np.max(validation_accuracies)
+        # print(np.min(validation_losses))
+        ensemble_accuracy = ensemble_prediction(trained_parameters)
+        print('New member at {:.2f}% validation accuracy'.format(max_accuracy))
+        print(
+            'Ensemble at {:.2f}% with {} members'
+            ''.format(ensemble_accuracy, len(trained_parameters))
+        )
+        print()
+
+    ensemble_accuracy = ensemble_prediction(trained_parameters)
+    print(ensemble_accuracy)
 
 
 if __name__ == '__main__':
