@@ -1,5 +1,6 @@
 from lasagne.layers import (
     InputLayer, DenseLayer,
+    Conv2DLayer,
     get_all_params, get_all_param_values,
     set_all_param_values, get_output)
 from lasagne.objectives import categorical_crossentropy, categorical_accuracy
@@ -19,9 +20,9 @@ import pickle
 import os
 
 
-early_stopping_epochs = 10
-hidden_size = 100
-max_epochs = 250
+early_stopping_epochs = 5
+hidden_size = 2048
+max_epochs = 20
 
 
 def build_parser():
@@ -48,17 +49,61 @@ def build_network(
         hidden_size=hidden_size, output_classes=10):
     network = OrderedDict()
 
+    # network['input'] = InputLayer(
+    #     shape=(batch_size, feature_dimensionality),
+    #     input_var=input_var
+    # )
     network['input'] = InputLayer(
-        shape=(batch_size, feature_dimensionality),
+        shape=(batch_size, 3, 32, 32),
         input_var=input_var
     )
 
+    network['conv1_1'] = Conv2DLayer(
+        network['input'],
+        num_filters=64,
+        filter_size=(3, 3)
+    )
+    network['conv1_2'] = Conv2DLayer(
+        network['conv1_1'],
+        num_filters=64,
+        filter_size=(3, 3),
+        stride=2
+    )
+    network['conv2_1'] = Conv2DLayer(
+        network['conv1_2'],
+        num_filters=128,
+        filter_size=(3, 3)
+    )
+    network['conv2_2'] = Conv2DLayer(
+        network['conv2_1'],
+        num_filters=128,
+        filter_size=(3, 3),
+        stride=2
+    )
+    network['conv3_1'] = Conv2DLayer(
+        network['conv2_2'],
+        num_filters=256,
+        filter_size=(3, 3)
+    )
+    network['conv3_2'] = Conv2DLayer(
+        network['conv3_1'],
+        num_filters=256,
+        filter_size=(3, 3),
+        stride=2
+    )
+
     network['fc1'] = DenseLayer(
-        network['input'], hidden_size
+        network['conv3_2'], hidden_size
     )
     network['fc2'] = DenseLayer(
         network['fc1'], hidden_size
     )
+    # network['fc1'] = DenseLayer(
+    #     network['input'], hidden_size
+    # )
+    # network['fc2'] = DenseLayer(
+    #     network['fc1'], hidden_size
+    # )
 
     network['output'] = DenseLayer(
         network['fc2'],
@@ -91,7 +136,9 @@ def get_bootstrap(*input_arrays):
     )
 
 
-def load_data(dataset_directory, dataset_mean):
+def load_data(
+        dataset_directory, dataset_mean,
+        mean_normalise=True, four_dim=True):
     def load_index(index):
         path = os.path.join(
             dataset_directory,
@@ -113,7 +160,13 @@ def load_data(dataset_directory, dataset_mean):
     train_data = train_data / 255.
 
     assert train_data.shape[1] == dataset_mean.shape[0]
-    train_data = train_data - dataset_mean
+
+    if mean_normalise:
+        train_data = train_data - dataset_mean
+
+    if four_dim:
+        train_data = train_data.reshape((-1, 3, 32, 32))
+        # train_data = train_data.transpose(0, 2, 3, 1)
 
     train_data = train_data.astype(theano.config.floatX)
     train_labels = train_labels.astype(np.int32)
@@ -151,7 +204,7 @@ def make_training_function(
             initial_network_params
         )
 
-        n_chunks = 50
+        n_chunks = 100
         train_chunks = list(zip(
             np.split(train_X, n_chunks),
             np.split(train_y, n_chunks)
@@ -235,7 +288,9 @@ def main():
     args = build_parser().parse_args()
 
     dataset_mean = load_mean(args.mean_path)
-    X, y = load_data(args.dataset_directory, dataset_mean)
+    X, y = load_data(
+        args.dataset_directory, dataset_mean,
+        mean_normalise=True, four_dim=True)
 
     train_X, train_y, val_X, val_y = train_val_split(X, y)
 
@@ -244,7 +299,8 @@ def main():
     # import IPython
     # IPython.embed()
 
-    input_var = T.matrix('input', dtype=theano.config.floatX)
+    # input_var = T.matrix('input', dtype=theano.config.floatX)
+    input_var = T.tensor4('input', dtype=theano.config.floatX)
     target = T.vector('target', dtype='int32')
 
     network = build_network(input_var=input_var)
@@ -297,7 +353,8 @@ def main():
             best_params, training_losses,
             validation_losses, validation_accuracies
         ) = train_network(
-            *bootstrap, initialisation, False, False)
+            *bootstrap, initialisation, True, True)
+        # *bootstrap, initialisation, False, False)
         trained_parameters.append(best_params)
         max_accuracy = np.max(validation_accuracies)
         # print(np.min(validation_losses))
