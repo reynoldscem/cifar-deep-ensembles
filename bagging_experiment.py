@@ -1,8 +1,8 @@
 from lasagne.layers import (
     InputLayer, DenseLayer,
-    Conv2DLayer,
+    Conv2DLayer, Pool2DLayer,
     get_all_params, get_all_param_values,
-    set_all_param_values, get_output)
+    set_all_param_values, get_output, batch_norm)
 from lasagne.objectives import categorical_crossentropy, categorical_accuracy
 from lasagne.nonlinearities import softmax
 from lasagne.updates import adam
@@ -20,8 +20,8 @@ import pickle
 import os
 
 
-early_stopping_epochs = 5
-hidden_size = 2048
+early_stopping_epochs = 3
+hidden_size = 4096
 max_epochs = 20
 
 
@@ -49,6 +49,15 @@ def build_network(
         hidden_size=hidden_size, output_classes=10):
     network = OrderedDict()
 
+    def previous_layer():
+        return network[next(reversed(network))]
+
+    def apply_batch_norm():
+        last_layer_key = next(reversed(network))
+        network[last_layer_key] = batch_norm(
+            network[last_layer_key]
+        )
+
     # network['input'] = InputLayer(
     #     shape=(batch_size, feature_dimensionality),
     #     input_var=input_var
@@ -59,54 +68,128 @@ def build_network(
     )
 
     network['conv1_1'] = Conv2DLayer(
-        network['input'],
+        previous_layer(),
         num_filters=64,
-        filter_size=(3, 3)
+        filter_size=(3, 3),
+        pad='same',
     )
+    apply_batch_norm()
     network['conv1_2'] = Conv2DLayer(
-        network['conv1_1'],
+        previous_layer(),
         num_filters=64,
         filter_size=(3, 3),
-        stride=2
+        pad='same',
     )
-    network['conv2_1'] = Conv2DLayer(
-        network['conv1_2'],
-        num_filters=128,
-        filter_size=(3, 3)
-    )
-    network['conv2_2'] = Conv2DLayer(
-        network['conv2_1'],
-        num_filters=128,
-        filter_size=(3, 3),
-        stride=2
-    )
-    network['conv3_1'] = Conv2DLayer(
-        network['conv2_2'],
-        num_filters=256,
-        filter_size=(3, 3)
-    )
-    network['conv3_2'] = Conv2DLayer(
-        network['conv3_1'],
-        num_filters=256,
-        filter_size=(3, 3),
-        stride=2
+    apply_batch_norm()
+    network['pool1'] = Pool2DLayer(
+        previous_layer(),
+        2
     )
 
-    network['fc1'] = DenseLayer(
-        network['conv3_2'], hidden_size
+    network['conv2_1'] = Conv2DLayer(
+        previous_layer(),
+        num_filters=128,
+        filter_size=(3, 3),
+        pad='same',
     )
-    network['fc2'] = DenseLayer(
-        network['fc1'], hidden_size
+    apply_batch_norm()
+    network['conv2_2'] = Conv2DLayer(
+        previous_layer(),
+        num_filters=128,
+        filter_size=(3, 3),
+        pad='same',
     )
-    # network['fc1'] = DenseLayer(
-    #     network['input'], hidden_size
-    # )
-    # network['fc2'] = DenseLayer(
-    #     network['fc1'], hidden_size
-    # )
+    apply_batch_norm()
+    network['pool2'] = Pool2DLayer(
+        previous_layer(),
+        2
+    )
+
+    network['conv3_1'] = Conv2DLayer(
+        previous_layer(),
+        num_filters=256,
+        filter_size=(3, 3),
+        pad='same',
+    )
+    apply_batch_norm()
+    network['conv3_2'] = Conv2DLayer(
+        previous_layer(),
+        num_filters=256,
+        filter_size=(3, 3),
+        pad='same',
+    )
+    apply_batch_norm()
+    network['conv3_3'] = Conv2DLayer(
+        previous_layer(),
+        num_filters=256,
+        filter_size=(3, 3),
+        pad='same',
+    )
+    apply_batch_norm()
+    network['pool3'] = Pool2DLayer(
+        previous_layer(),
+        2
+    )
+
+    network['conv4_1'] = Conv2DLayer(
+        previous_layer(),
+        num_filters=512,
+        filter_size=(3, 3),
+        pad='same',
+    )
+    apply_batch_norm()
+    network['conv4_2'] = Conv2DLayer(
+        previous_layer(),
+        num_filters=512,
+        filter_size=(3, 3),
+
+    apply_batch_norm()
+    network['conv4_3'] = Conv2DLayer(
+        previous_layer(),
+        num_filters=512,
+        filter_size=(3, 3),
+        pad='same',
+    )
+    apply_batch_norm()
+    network['pool4'] = Pool2DLayer(
+        previous_layer(),
+        2
+    )
+
+    network['conv5_1'] = Conv2DLayer(
+        previous_layer(),
+        num_filters=512,
+        filter_size=(3, 3),
+        pad='same',
+    )
+    apply_batch_norm()
+    network['conv5_2'] = Conv2DLayer(
+        previous_layer(),
+        num_filters=512,
+        filter_size=(3, 3),
+        pad='same',
+    )
+    apply_batch_norm()
+    network['conv5_3'] = Conv2DLayer(
+        previous_layer(),
+        num_filters=512,
+        filter_size=(3, 3),
+        pad='same',
+    )
+    apply_batch_norm()
+    network['pool5'] = Pool2DLayer(
+        previous_layer(),
+        2
+    )
+
+    network['fc6'] = DenseLayer(
+        previous_layer(),
+        512
+    )
+    apply_batch_norm()
 
     network['output'] = DenseLayer(
-        network['fc2'],
+        previous_layer(),
         output_classes,
         nonlinearity=softmax
     )
@@ -204,11 +287,15 @@ def make_training_function(
             initial_network_params
         )
 
-        n_chunks = 100
+        n_chunks = 225
         train_chunks = list(zip(
             np.split(train_X, n_chunks),
             np.split(train_y, n_chunks)
         ))
+        if print_train_info:
+            sizes = set(chunk[0].shape[0] for chunk in train_chunks)
+            print('Minibatch sizes used: {}'.format(sizes))
+
         training_losses = []
         validation_losses = []
         validation_accuracies = []
@@ -218,7 +305,9 @@ def make_training_function(
         for epoch in range(1, max_epochs):
             training_loss = 0.
             for X_chunk, y_chunk in train_chunks:
-                training_loss += train_function(X_chunk, y_chunk) / n_chunks
+                minibatch_loss = train_function(X_chunk, y_chunk) / n_chunks
+                # print(minibatch_loss)
+                training_loss += minibatch_loss
 
             validation_loss = float(loss_function(val_X, val_y))
             validation_accuracy = float(accuracy_function(val_X, val_y))
@@ -296,9 +385,6 @@ def main():
 
     print([mat.shape for mat in (train_X, train_y, val_X, val_y)])
 
-    # import IPython
-    # IPython.embed()
-
     # input_var = T.matrix('input', dtype=theano.config.floatX)
     input_var = T.tensor4('input', dtype=theano.config.floatX)
     target = T.vector('target', dtype='int32')
@@ -306,11 +392,13 @@ def main():
     network = build_network(input_var=input_var)
     prediction = get_output(network['output'])
     loss = categorical_crossentropy(prediction, target).mean()
-    accuracy = 100. * categorical_accuracy(prediction, target).mean()
+    accuracy = np.array(100., dtype=theano.config.floatX) * (
+        categorical_accuracy(prediction, target).mean())
 
     params = get_all_params(network['output'], trainable=True)
     updates = adam(loss, params)
 
+    print('Starting theano function compliation')
     train_function = theano.function(
         [input_var, target],
         loss,
@@ -328,6 +416,7 @@ def main():
         [input_var],
         prediction
     )
+    print('Finished theano function compliation')
     ensemble_prediction = make_ens_predictor(
         network, pred_function, val_X, val_y
     )
@@ -337,7 +426,7 @@ def main():
         val_X, val_y
     )
 
-    k = 32
+    k = 8
     initialisations = get_k_network_initialisations(k, input_var=input_var)
     bootstraps = [
         get_bootstrap(train_X, train_y)
@@ -365,6 +454,8 @@ def main():
             ''.format(ensemble_accuracy, len(trained_parameters))
         )
         print()
+        import IPython
+        IPython.embed()
 
     ensemble_accuracy = ensemble_prediction(trained_parameters)
     print(ensemble_accuracy)
