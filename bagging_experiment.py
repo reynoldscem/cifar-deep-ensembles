@@ -17,13 +17,14 @@ from queue import PriorityQueue
 from functools import reduce
 import numpy as np
 import pickle
+import sys
 import os
 
 
 early_stopping_epochs = 3
 hidden_size = 4096
 max_epochs = 20
-
+k = 64
 
 def build_parser():
     parser = ArgumentParser(description=__doc__)
@@ -67,16 +68,18 @@ def build_network(
         input_var=input_var
     )
 
+    base_power = 3
+
     network['conv1_1'] = Conv2DLayer(
         previous_layer(),
-        num_filters=64,
+        num_filters=2 ** base_power,
         filter_size=(3, 3),
         pad='same',
     )
     apply_batch_norm()
     network['conv1_2'] = Conv2DLayer(
         previous_layer(),
-        num_filters=64,
+        num_filters=2 ** base_power,
         filter_size=(3, 3),
         pad='same',
     )
@@ -88,14 +91,14 @@ def build_network(
 
     network['conv2_1'] = Conv2DLayer(
         previous_layer(),
-        num_filters=128,
+        num_filters=2 ** (base_power + 1),
         filter_size=(3, 3),
         pad='same',
     )
     apply_batch_norm()
     network['conv2_2'] = Conv2DLayer(
         previous_layer(),
-        num_filters=128,
+        num_filters=2 ** (base_power + 1),
         filter_size=(3, 3),
         pad='same',
     )
@@ -107,21 +110,21 @@ def build_network(
 
     network['conv3_1'] = Conv2DLayer(
         previous_layer(),
-        num_filters=256,
+        num_filters=2 ** (base_power + 2),
         filter_size=(3, 3),
         pad='same',
     )
     apply_batch_norm()
     network['conv3_2'] = Conv2DLayer(
         previous_layer(),
-        num_filters=256,
+        num_filters=2 ** (base_power + 2),
         filter_size=(3, 3),
         pad='same',
     )
     apply_batch_norm()
     network['conv3_3'] = Conv2DLayer(
         previous_layer(),
-        num_filters=256,
+        num_filters=2 ** (base_power + 2),
         filter_size=(3, 3),
         pad='same',
     )
@@ -133,20 +136,21 @@ def build_network(
 
     network['conv4_1'] = Conv2DLayer(
         previous_layer(),
-        num_filters=512,
+        num_filters=2 ** (base_power + 3),
         filter_size=(3, 3),
         pad='same',
     )
     apply_batch_norm()
     network['conv4_2'] = Conv2DLayer(
         previous_layer(),
-        num_filters=512,
+        num_filters=2 ** (base_power + 3),
         filter_size=(3, 3),
-
+        pad='same',
+    )
     apply_batch_norm()
     network['conv4_3'] = Conv2DLayer(
         previous_layer(),
-        num_filters=512,
+        num_filters=2 ** (base_power + 3),
         filter_size=(3, 3),
         pad='same',
     )
@@ -158,21 +162,21 @@ def build_network(
 
     network['conv5_1'] = Conv2DLayer(
         previous_layer(),
-        num_filters=512,
+        num_filters=2 ** (base_power + 3),
         filter_size=(3, 3),
         pad='same',
     )
     apply_batch_norm()
     network['conv5_2'] = Conv2DLayer(
         previous_layer(),
-        num_filters=512,
+        num_filters=2 ** (base_power + 3),
         filter_size=(3, 3),
         pad='same',
     )
     apply_batch_norm()
     network['conv5_3'] = Conv2DLayer(
         previous_layer(),
-        num_filters=512,
+        num_filters=2 ** (base_power + 3),
         filter_size=(3, 3),
         pad='same',
     )
@@ -184,7 +188,7 @@ def build_network(
 
     network['fc6'] = DenseLayer(
         previous_layer(),
-        512
+        2 ** (base_power + 3)
     )
     apply_batch_norm()
 
@@ -213,7 +217,7 @@ def get_bootstrap(*input_arrays):
         row_indices, size=row_indices.size
     )
 
-    return tuple(
+    return (
         input_array[bootstrap_indices]
         for input_array in input_arrays
     )
@@ -287,7 +291,7 @@ def make_training_function(
             initial_network_params
         )
 
-        n_chunks = 225
+        n_chunks = 100
         train_chunks = list(zip(
             np.split(train_X, n_chunks),
             np.split(train_y, n_chunks)
@@ -317,6 +321,7 @@ def make_training_function(
                     epoch, training_loss))
                 print('\tval loss: {}'.format(validation_loss))
                 print('\tval accuracy: {:.2f}%'.format(validation_accuracy))
+                sys.stdout.flush()
 
             training_losses.append(training_loss)
             validation_losses.append(validation_loss)
@@ -426,7 +431,6 @@ def main():
         val_X, val_y
     )
 
-    k = 8
     initialisations = get_k_network_initialisations(k, input_var=input_var)
     bootstraps = [
         get_bootstrap(train_X, train_y)
@@ -442,10 +446,10 @@ def main():
             best_params, training_losses,
             validation_losses, validation_accuracies
         ) = train_network(
-            *bootstrap, initialisation, True, True)
+            *bootstrap, initialisation, True, False)
         # *bootstrap, initialisation, False, False)
         trained_parameters.append(best_params)
-        max_accuracy = np.max(validation_accuracies)
+        max_accuracy = validation_accuracies[np.argmin(validation_losses)]
         # print(np.min(validation_losses))
         ensemble_accuracy = ensemble_prediction(trained_parameters)
         print('New member at {:.2f}% validation accuracy'.format(max_accuracy))
@@ -454,8 +458,7 @@ def main():
             ''.format(ensemble_accuracy, len(trained_parameters))
         )
         print()
-        import IPython
-        IPython.embed()
+        sys.stdout.flush()
 
     ensemble_accuracy = ensemble_prediction(trained_parameters)
     print(ensemble_accuracy)
