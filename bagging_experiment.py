@@ -9,6 +9,7 @@ import theano
 
 from matplotlib import pyplot as plt
 from argparse import ArgumentParser
+from itertools import combinations
 from queue import PriorityQueue
 from functools import reduce
 import numpy as np
@@ -259,6 +260,17 @@ def make_ens_predictor(network, pred_function, X, y):
     return ensemble_prediction
 
 
+# From https://stackoverflow.com/questions/3431825/ ...
+# generating-an-md5-checksum-of-a-file
+def md5(filename):
+    from hashlib import md5
+    hash_md5 = md5()
+    with open(filename, 'rb') as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+
 def main():
     args = build_parser().parse_args()
 
@@ -274,6 +286,8 @@ def main():
     )
 
     np.random.seed(args.seed)
+    import lasagne
+    lasagne.random.set_rng(np.random.RandomState(args.seed))
     experiment_timestamp = str(time.time()).replace('.', '-')
     experiment_path = os.path.join(
         os.path.dirname(os.path.realpath(__file__)),
@@ -404,10 +418,33 @@ def main():
         }
         with open(os.path.join(member_path, 'train_stats.json'), 'w') as fd:
             json.dump(stats, fd, indent=4)
+        model_save_path = os.path.join(member_path, 'model.npz')
         np.savez(
-            os.path.join(member_path, 'model.npz'),
+            model_save_path,
             *get_all_param_values(model.final_layer)
         )
+        model_hash = md5(model_save_path)
+        model_hash_path = os.path.join(member_path, 'model_hash.txt')
+        with open(model_hash_path, 'w') as fd:
+            fd.write(model_hash + '\n')
+
+    ensemble_accuracies = {}
+    for num_models in range(1, args.num_individuals + 1):
+        parameter_combinations = combinations(
+            trained_parameters, num_models
+        )
+        validation_accuracies = [
+            ensemble_prediction(parameter_combination)
+            for parameter_combination in parameter_combinations
+        ]
+        ensemble_accuracies[num_models] = {
+            'mean': np.mean(validation_accuracies),
+            'std': np.std(validation_accuracies),
+            'raw': validation_accuracies
+        }
+    results_path = os.path.join(experiment_path, 'results.json')
+    with open(results_path, 'w') as fd:
+        json.dump(ensemble_accuracies, fd, indent=4)
 
 
 if __name__ == '__main__':
