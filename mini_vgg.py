@@ -14,8 +14,6 @@ class MiniVGG():
         self.build_network(
             input_var, batch_size, output_classes, base_power
         )
-        import IPython
-        IPython.embed()
 
     def pretty_print_network(self):
         info_list = []
