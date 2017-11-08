@@ -58,6 +58,16 @@ def build_parser():
         default=128
     )
 
+    parser.add_argument(
+        '--base-power',
+        help=(
+            'Denotes the starting number of filters.'
+            'First block is 2**base_power. Doubles each block.'
+        ),
+        type=int,
+        default=3
+    )
+
     return parser
 
 
@@ -249,6 +259,11 @@ def main():
         'Must have at least 1 epoch.'
     )
 
+    assert args.base_power >= 0, (
+        'Cannot have fractional filters!'
+    )
+
+    # Initial dataset setup
     dataset_mean = load_mean(args.mean_path)
     X, y = load_data(
         args.dataset_directory, dataset_mean,
@@ -256,12 +271,23 @@ def main():
 
     train_X, train_y, val_X, val_y = train_val_split(X, y)
 
-    print([mat.shape for mat in (train_X, train_y, val_X, val_y)])
+    print(
+        'Train X shape: {}\ttrain y shape: {}'
+        'Test X shape: {}\tTest y shape: {}'
+        ''.format(*(mat.shape for mat in (train_X, train_y, val_X, val_y)))
+    )
 
+    # Network setup
     input_var = T.tensor4('input', dtype=theano.config.floatX)
     target = T.vector('target', dtype='int32')
 
-    model = MiniVGG(input_var=input_var)
+    network_kwargs = {
+        'input_var': input_var,
+        'base_power': args.base_power
+    }
+    model = MiniVGG(**network_kwargs)
+    model.pretty_print_network()
+
     network = model.network
     prediction = get_output(network['output'])
     loss = categorical_crossentropy(prediction, target).mean()
@@ -301,8 +327,10 @@ def main():
         args.early_stopping_epochs
     )
 
+    # Setup bootstraps
     initialisations = get_k_network_initialisations(
-        args.num_individuals, input_var=input_var
+        args.num_individuals,
+        input_var=input_var, base_power=args.base_power
     )
     bootstraps = [
         get_bootstrap(train_X, train_y)
@@ -310,6 +338,7 @@ def main():
     ]
     ensembles = zip(initialisations, bootstraps)
 
+    # Train models
     trained_parameters = []
     for initialisation, bootstrap in ensembles:
         (
@@ -317,11 +346,11 @@ def main():
             validation_losses, validation_accuracies
         ) = train_network(
             *bootstrap, initialisation, True, False)
-        # *bootstrap, initialisation, False, False)
         trained_parameters.append(best_params)
+
         max_accuracy = validation_accuracies[np.argmin(validation_losses)]
-        # print(np.min(validation_losses))
         ensemble_accuracy = ensemble_prediction(trained_parameters)
+
         print('New member at {:.2f}% validation accuracy'.format(max_accuracy))
         print(
             'Ensemble at {:.2f}% with {} members'
@@ -329,9 +358,6 @@ def main():
         )
         print()
         sys.stdout.flush()
-
-    ensemble_accuracy = ensemble_prediction(trained_parameters)
-    print(ensemble_accuracy)
 
 
 if __name__ == '__main__':
