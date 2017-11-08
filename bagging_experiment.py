@@ -12,7 +12,10 @@ from argparse import ArgumentParser
 from queue import PriorityQueue
 from functools import reduce
 import numpy as np
+import subprocess
 import pickle
+import json
+import time
 import sys
 import os
 
@@ -66,6 +69,13 @@ def build_parser():
         ),
         type=int,
         default=3
+    )
+
+    parser.add_argument(
+        '--seed',
+        help='Random seed for numpy to use.',
+        type=int,
+        default=72826
     )
 
     return parser
@@ -263,6 +273,32 @@ def main():
         'Cannot have fractional filters!'
     )
 
+    np.random.seed(args.seed)
+    experiment_timestamp = str(time.time()).replace('.', '-')
+    experiment_path = os.path.join(
+        os.path.dirname(os.path.realpath(__file__)),
+        'experiments',
+        experiment_timestamp
+    )
+    if os.path.exists(experiment_path):
+        print('Experiment directory exists!')
+        sys.exit(1)
+    else:
+        os.makedirs(experiment_path)
+
+    # Save the commit hash used for these experiments.
+    commit_hash = str(
+        subprocess.check_output(['git', 'rev-parse', 'HEAD']),
+        'utf-8'
+    )
+    commit_file_path = os.path.join(experiment_path, 'exp_commit.txt')
+    with open(commit_file_path, 'w') as fd:
+        fd.write(commit_hash)
+
+    args_file_path = os.path.join(experiment_path, 'provided_args.txt')
+    with open(args_file_path, 'w') as fd:
+        json.dump(vars(args), fd, indent=4)
+
     # Initial dataset setup
     dataset_mean = load_mean(args.mean_path)
     X, y = load_data(
@@ -340,7 +376,7 @@ def main():
 
     # Train models
     trained_parameters = []
-    for initialisation, bootstrap in ensembles:
+    for index, (initialisation, bootstrap) in enumerate(ensembles):
         (
             best_params, training_losses,
             validation_losses, validation_accuracies
@@ -358,6 +394,20 @@ def main():
         )
         print()
         sys.stdout.flush()
+
+        member_path = os.path.join(experiment_path, 'model_{}'.format(index))
+        os.makedirs(member_path)
+        stats = {
+            'training_losses': training_losses,
+            'validation_losses': validation_losses,
+            'validation_accuracies': validation_accuracies
+        }
+        with open(os.path.join(member_path, 'train_stats.json'), 'w') as fd:
+            json.dump(stats, fd, indent=4)
+        np.savez(
+            os.path.join(member_path, 'model.npz'),
+            *get_all_param_values(model.final_layer)
+        )
 
 
 if __name__ == '__main__':
