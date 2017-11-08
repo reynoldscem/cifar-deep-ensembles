@@ -18,11 +18,6 @@ import os
 
 from mini_vgg import MiniVGG
 
-early_stopping_epochs = 3
-hidden_size = 4096
-max_epochs = 20
-k = 64
-
 
 def build_parser():
     parser = ArgumentParser(description=__doc__)
@@ -37,6 +32,30 @@ def build_parser():
         '-m', '--mean-path',
         help='Path to npy file containing dataset mean.',
         default='cifar_mean.npy'
+    )
+
+    parser.add_argument(
+        '--early-stopping-epochs',
+        help=(
+            'Number of epochs without improvement for which to train.'
+            ' Negative values will prevent using early stopping.'
+        ),
+        type=int,
+        default=3
+    )
+
+    parser.add_argument(
+        '--max-epochs',
+        help='Max number of epochs to train for',
+        type=int,
+        default=50
+    )
+
+    parser.add_argument(
+        '-k', '--num-individuals',
+        help='Number of individuals to train for ensemble',
+        type=int,
+        default=128
     )
 
     return parser
@@ -123,7 +142,7 @@ def train_val_split(X, y, val_proportion=0.1):
 def make_training_function(
         train_function, loss_function,
         accuracy_function, network,
-        val_X, val_y):
+        val_X, val_y, max_epochs, early_stopping_epochs):
     def train_network(
             train_X, train_y, initial_network_params,
             print_train_info=True, plot_figures=True):
@@ -148,7 +167,7 @@ def make_training_function(
         min_val_loss = None
 
         param_queue = PriorityQueue(maxsize=2)
-        for epoch in range(1, max_epochs):
+        for epoch in range(1, max_epochs + 1):
             training_loss = 0.
             for X_chunk, y_chunk in train_chunks:
                 minibatch_loss = train_function(X_chunk, y_chunk) / n_chunks
@@ -223,6 +242,13 @@ def make_ens_predictor(network, pred_function, X, y):
 def main():
     args = build_parser().parse_args()
 
+    assert args.num_individuals >= 1, (
+        'Must have at least one member in ensemble'
+    )
+    assert args.max_epochs >= 1, (
+        'Must have at least 1 epoch.'
+    )
+
     dataset_mean = load_mean(args.mean_path)
     X, y = load_data(
         args.dataset_directory, dataset_mean,
@@ -232,7 +258,6 @@ def main():
 
     print([mat.shape for mat in (train_X, train_y, val_X, val_y)])
 
-    # input_var = T.matrix('input', dtype=theano.config.floatX)
     input_var = T.tensor4('input', dtype=theano.config.floatX)
     target = T.vector('target', dtype='int32')
 
@@ -271,17 +296,19 @@ def main():
     train_network = make_training_function(
         train_function, loss_function,
         accuracy_function, network,
-        val_X, val_y
+        val_X, val_y,
+        args.max_epochs,
+        args.early_stopping_epochs
     )
 
-    initialisations = get_k_network_initialisations(k, input_var=input_var)
+    initialisations = get_k_network_initialisations(
+        args.num_individuals, input_var=input_var
+    )
     bootstraps = [
         get_bootstrap(train_X, train_y)
-        for _ in range(k)
+        for _ in range(args.num_individuals)
     ]
     ensembles = zip(initialisations, bootstraps)
-
-    # initial_network_params = get_all_param_values(network['output'])
 
     trained_parameters = []
     for initialisation, bootstrap in ensembles:
