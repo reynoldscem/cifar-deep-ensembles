@@ -1,17 +1,13 @@
 from lasagne.layers import (
-    InputLayer, DenseLayer,
-    Conv2DLayer, Pool2DLayer,
     get_all_params, get_all_param_values,
-    set_all_param_values, get_output, batch_norm)
+    set_all_param_values, get_output)
 from lasagne.objectives import categorical_crossentropy, categorical_accuracy
-from lasagne.nonlinearities import softmax
 from lasagne.updates import adam
 
 from theano import tensor as T
 import theano
 
 from matplotlib import pyplot as plt
-from collections import OrderedDict
 from argparse import ArgumentParser
 from queue import PriorityQueue
 from functools import reduce
@@ -20,11 +16,13 @@ import pickle
 import sys
 import os
 
+from mini_vgg import MiniVGG
 
 early_stopping_epochs = 3
 hidden_size = 4096
 max_epochs = 20
 k = 64
+
 
 def build_parser():
     parser = ArgumentParser(description=__doc__)
@@ -44,167 +42,11 @@ def build_parser():
     return parser
 
 
-def build_network(
-        input_var=None,
-        batch_size=None, feature_dimensionality=3072,
-        hidden_size=hidden_size, output_classes=10):
-    network = OrderedDict()
-
-    def previous_layer():
-        return network[next(reversed(network))]
-
-    def apply_batch_norm():
-        last_layer_key = next(reversed(network))
-        network[last_layer_key] = batch_norm(
-            network[last_layer_key]
-        )
-
-    # network['input'] = InputLayer(
-    #     shape=(batch_size, feature_dimensionality),
-    #     input_var=input_var
-    # )
-    network['input'] = InputLayer(
-        shape=(batch_size, 3, 32, 32),
-        input_var=input_var
-    )
-
-    base_power = 3
-
-    network['conv1_1'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** base_power,
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['conv1_2'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** base_power,
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['pool1'] = Pool2DLayer(
-        previous_layer(),
-        2
-    )
-
-    network['conv2_1'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** (base_power + 1),
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['conv2_2'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** (base_power + 1),
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['pool2'] = Pool2DLayer(
-        previous_layer(),
-        2
-    )
-
-    network['conv3_1'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** (base_power + 2),
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['conv3_2'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** (base_power + 2),
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['conv3_3'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** (base_power + 2),
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['pool3'] = Pool2DLayer(
-        previous_layer(),
-        2
-    )
-
-    network['conv4_1'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** (base_power + 3),
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['conv4_2'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** (base_power + 3),
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['conv4_3'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** (base_power + 3),
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['pool4'] = Pool2DLayer(
-        previous_layer(),
-        2
-    )
-
-    network['conv5_1'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** (base_power + 3),
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['conv5_2'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** (base_power + 3),
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['conv5_3'] = Conv2DLayer(
-        previous_layer(),
-        num_filters=2 ** (base_power + 3),
-        filter_size=(3, 3),
-        pad='same',
-    )
-    apply_batch_norm()
-    network['pool5'] = Pool2DLayer(
-        previous_layer(),
-        2
-    )
-
-    network['fc6'] = DenseLayer(
-        previous_layer(),
-        2 ** (base_power + 3)
-    )
-    apply_batch_norm()
-
-    network['output'] = DenseLayer(
-        previous_layer(),
-        output_classes,
-        nonlinearity=softmax
-    )
-
-    return network
-
-
 def get_k_network_initialisations(k, *args, **kwargs):
     params_list = []
     for index in range(k):
-        network = build_network(*args, **kwargs)
+        model = MiniVGG(*args, **kwargs)
+        network = model.network
         params = get_all_param_values(network['output'])
         params_list.append(params)
 
@@ -394,7 +236,8 @@ def main():
     input_var = T.tensor4('input', dtype=theano.config.floatX)
     target = T.vector('target', dtype='int32')
 
-    network = build_network(input_var=input_var)
+    model = MiniVGG(input_var=input_var)
+    network = model.network
     prediction = get_output(network['output'])
     loss = categorical_crossentropy(prediction, target).mean()
     accuracy = np.array(100., dtype=theano.config.floatX) * (
