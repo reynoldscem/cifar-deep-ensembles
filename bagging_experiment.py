@@ -236,7 +236,7 @@ def main():
     with open(commit_file_path, 'w') as fd:
         fd.write(commit_hash)
 
-    args_file_path = os.path.join(experiment_path, 'provided_args.txt')
+    args_file_path = os.path.join(experiment_path, 'provided_args.json')
     with open(args_file_path, 'w') as fd:
         json.dump(vars(args), fd, indent=4)
 
