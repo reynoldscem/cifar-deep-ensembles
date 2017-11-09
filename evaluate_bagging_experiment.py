@@ -38,8 +38,40 @@ def build_parser():
     return parser
 
 
+def load_experiment_params(experiment_path):
+    # Commit 0aff288422aba2ed485333badf821f6a022c4aef writes provided_args
+    #  with the extension .txt, so account for both.
+    matching_filenames = [
+        filename
+        for filename in os.listdir(experiment_path)
+        if filename.startswith('provided_args')
+    ]
+    if len(matching_filenames) == 0:
+        raise FileNotFoundError('Couldn\'t find argument file!')
+    else:
+        filename = os.path.join(experiment_path, matching_filenames[0])
+
+    with open(filename) as fd:
+        experiment_params = dict(json.load(fd))
+
+    return experiment_params
+
+
 def main():
     args = build_parser().parse_args()
+
+    assert os.path.exists(args.experiment_path), (
+        'Experiment path must exist!'
+    )
+
+    experiment_params = load_experiment_params(args.experiment_path)
+
+    import IPython
+    IPython.embed()
+
+    import sys
+    sys.exit(0)
+
     # Initial dataset setup
     dataset_mean = load_mean(args.mean_path)
     X, y = load_data(
@@ -59,7 +91,7 @@ def main():
 
     network_kwargs = {
         'input_var': input_var,
-        'base_power': args.base_power
+        'base_power': experiment_params['base_power']
     }
     model = MiniVGG(**network_kwargs)
     model.pretty_print_network()
