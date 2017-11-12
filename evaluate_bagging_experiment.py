@@ -6,10 +6,12 @@ from theano import tensor as T
 import theano
 
 from argparse import ArgumentParser
-from itertools import combinations
 import numpy as np
 import json
 import os
+
+from random import sample
+import sys
 
 from mini_vgg import MiniVGG
 
@@ -57,6 +59,22 @@ def load_experiment_params(experiment_path):
     return experiment_params
 
 
+def load_weights(experiment_path, num_individuals):
+    def load_model_file(path):
+        with np.load(path) as fd:
+            params = [
+                fd['arr_{}'.format(index)]
+                for index in range(len(fd.files))
+            ]
+        return params
+    paths = [
+        os.path.join(experiment_path, 'model_{}'.format(index), 'model.npz')
+        for index in range(num_individuals)
+    ]
+    parameters = [load_model_file(path) for path in paths]
+    return parameters
+
+
 def main():
     args = build_parser().parse_args()
 
@@ -65,12 +83,6 @@ def main():
     )
 
     experiment_params = load_experiment_params(args.experiment_path)
-
-    import IPython
-    IPython.embed()
-
-    import sys
-    sys.exit(0)
 
     # Initial dataset setup
     dataset_mean = load_mean(args.mean_path)
@@ -109,11 +121,16 @@ def main():
         network, pred_function, val_X, val_y
     )
 
+    trained_parameters = load_weights(
+        args.experiment_path, experiment_params['num_individuals']
+    )
+    num_samples = 5
     ensemble_accuracies = {}
-    for num_models in range(1, args.num_individuals + 1):
-        parameter_combinations = combinations(
-            trained_parameters, num_models
-        )
+    for num_models in range(1, experiment_params['num_individuals'] + 1):
+        parameter_combinations = [
+            sample(trained_parameters, num_models)
+            for _ in range(num_samples)
+        ]
         validation_accuracies = [
             ensemble_prediction(parameter_combination)
             for parameter_combination in parameter_combinations
@@ -123,7 +140,12 @@ def main():
             'std': np.std(validation_accuracies),
             'raw': validation_accuracies
         }
-    results_path = os.path.join(experiment_path, 'results.json')
+        print(ensemble_accuracies)
+        sys.stdout.flush()
+    import time
+    experiment_timestamp = str(time.time()).replace('.', '-')
+    results_path = os.path.join(
+        args.experiment_path, 'results_{}.json'.format(experiment_timestamp))
     with open(results_path, 'w') as fd:
         json.dump(ensemble_accuracies, fd, indent=4)
 
