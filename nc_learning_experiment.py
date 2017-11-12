@@ -50,8 +50,15 @@ class NCEnsemble():
             self.ensemble['individual_{}'.format(index)]
             for index in range(self.num_individuals)
         ]
-        error_term = categorical_crossentropy(
-            get_output(self.ensemble['p_bar']), target
+        error_term = T.mean(
+            [
+                categorical_crossentropy(
+                    get_output(member.network['output']),
+                    target
+                )
+                for member in members
+            ],
+            axis=0
         )
         diversity_term = T.mean(
             [
@@ -84,6 +91,7 @@ class NCEnsemble():
             ]
         )
         self.ensemble['output'] = self.ensemble['p_bar']
+        self.final_layer = self.ensemble['output']
 
 
 def build_parser():
@@ -122,7 +130,7 @@ def build_parser():
         '-k', '--num-individuals',
         help='Number of individuals to train for ensemble',
         type=int,
-        default=128
+        default=32
     )
 
     parser.add_argument(
@@ -239,30 +247,30 @@ def main():
     import lasagne
     np.random.seed(args.seed)
     lasagne.random.set_rng(np.random.RandomState(args.seed))
-    # experiment_timestamp = str(time.time()).replace('.', '-')
-    # experiment_path = os.path.join(
-    #     os.path.dirname(os.path.realpath(__file__)),
-    #     'experiments',
-    #     experiment_timestamp
-    # )
-    # if os.path.exists(experiment_path):
-    #     print('Experiment directory exists!')
-    #     sys.exit(1)
-    # else:
-    #     os.makedirs(experiment_path)
+    experiment_timestamp = str(time.time()).replace('.', '-')
+    experiment_path = os.path.join(
+        os.path.dirname(os.path.realpath(__file__)),
+        'experiments',
+        experiment_timestamp
+    )
+    if os.path.exists(experiment_path):
+        print('Experiment directory exists!')
+        sys.exit(1)
+    else:
+        os.makedirs(experiment_path)
 
-    # # Save the commit hash used for these experiments.
-    # commit_hash = str(
-    #     subprocess.check_output(['git', 'rev-parse', 'HEAD']),
-    #     'utf-8'
-    # )
-    # commit_file_path = os.path.join(experiment_path, 'exp_commit.txt')
-    # with open(commit_file_path, 'w') as fd:
-    #     fd.write('\n'.join((__file__, commit_hash)))
+    # Save the commit hash used for these experiments.
+    commit_hash = str(
+        subprocess.check_output(['git', 'rev-parse', 'HEAD']),
+        'utf-8'
+    )
+    commit_file_path = os.path.join(experiment_path, 'exp_commit.txt')
+    with open(commit_file_path, 'w') as fd:
+        fd.write('\n'.join((__file__, commit_hash)))
 
-    # args_file_path = os.path.join(experiment_path, 'provided_args.json')
-    # with open(args_file_path, 'w') as fd:
-    #     json.dump(vars(args), fd, indent=4)
+    args_file_path = os.path.join(experiment_path, 'provided_args.json')
+    with open(args_file_path, 'w') as fd:
+        json.dump(vars(args), fd, indent=4)
 
     # Initial dataset setup
     dataset_mean = load_mean(args.mean_path)
@@ -282,116 +290,90 @@ def main():
     input_var = T.tensor4('input', dtype=theano.config.floatX)
     target = T.vector('target', dtype='int32')
 
-    # for num_individuals in range(1, args.num_individuals + 1):
-    num_individuals = 2
-    network_kwargs = {
-        'input_var': input_var,
-        'base_power': args.base_power,
-        'num_individuals': num_individuals
-    }
-    model = NCEnsemble(**network_kwargs)
-    # model.pretty_print_network()
-    # TODO I am HERE.
+    for lbd_val in np.linspace(0., 1., 11):
+        path_for_lambda = os.path.join(
+            experiment_path, '{:.2f}'.format(lbd_val))
+        os.makedirs(path_for_lambda)
+        for num_individuals in range(1, args.num_individuals + 1):
+            network_kwargs = {
+                'input_var': input_var,
+                'base_power': args.base_power,
+                'num_individuals': num_individuals
+            }
+            model = NCEnsemble(**network_kwargs)
 
-    network = model.network
-    prediction = get_output(network['output'])
-    # loss = categorical_crossentropy(prediction, target).mean()
-    loss = model.get_loss(
-        target, np.array(0.5, dtype=theano.config.floatX)).mean()
-    accuracy = np.array(100., dtype=theano.config.floatX) * (
-        categorical_accuracy(prediction, target).mean())
+            network = model.network
+            prediction = get_output(network['output'])
+            loss = model.get_loss(
+                target,
+                np.array(lbd_val, dtype=theano.config.floatX)
+            ).mean()
+            accuracy = np.array(100., dtype=theano.config.floatX) * (
+                categorical_accuracy(prediction, target).mean())
 
-    params = get_all_params(network['output'], trainable=True)
-    updates = adam(loss, params)
+            params = get_all_params(network['output'], trainable=True)
+            updates = adam(loss, params)
 
-    print('Starting theano function compliation')
-    train_function = theano.function(
-        [input_var, target],
-        loss,
-        updates=updates
-    )
-    loss_function = theano.function(
-        [input_var, target],
-        loss
-    )
-    accuracy_function = theano.function(
-        [input_var, target],
-        accuracy
-    )
-    # pred_function = theano.function(
-    #     [input_var],
-    #     prediction
-    # )
-    print('Finished theano function compliation')
+            print('Starting theano function compliation')
+            train_function = theano.function(
+                [input_var, target],
+                loss,
+                updates=updates
+            )
+            loss_function = theano.function(
+                [input_var, target],
+                loss
+            )
+            accuracy_function = theano.function(
+                [input_var, target],
+                accuracy
+            )
+            print('Finished theano function compliation')
 
-    # ensemble_prediction = make_ens_predictor(
-    #     network, pred_function, val_X, val_y
-    # )
-    train_network = make_training_function(
-        train_function, loss_function,
-        accuracy_function, network,
-        val_X, val_y,
-        args.max_epochs,
-        args.early_stopping_epochs
-    )
+            train_network = make_training_function(
+                train_function, loss_function,
+                accuracy_function, network,
+                val_X, val_y,
+                args.max_epochs,
+                args.early_stopping_epochs
+            )
 
-    # Train models
-    # trained_parameters = []
-    # for index, (initialisation, bootstrap) in enumerate(ensembles):
-    (
-        best_params, training_losses,
-        validation_losses, validation_accuracies
-    ) = train_network(
-        train_X, train_y, True, True)
-    #     trained_parameters.append(best_params)
+            (
+                best_params, training_losses,
+                validation_losses, validation_accuracies
+            ) = train_network(
+                train_X, train_y, True, False)
 
-    #     max_accuracy = validation_accuracies[np.argmin(validation_losses)]
-    #     ensemble_accuracy = ensemble_prediction(trained_parameters)
+            ensemble_accuracy = validation_accuracies[
+                np.argmin(validation_losses)]
 
-    #     print('New member at {:.2f}% validation accuracy'.format(max_accuracy))
-    #     print(
-    #         'Ensemble at {:.2f}% with {} members'
-    #         ''.format(ensemble_accuracy, len(trained_parameters))
-    #     )
-    #     print()
-    #     sys.stdout.flush()
+            print(
+                'Ensemble at {:.2f}% with {} members'
+                ''.format(ensemble_accuracy, num_individuals)
+            )
+            print()
+            sys.stdout.flush()
 
-    #     member_path = os.path.join(experiment_path, 'model_{}'.format(index))
-    #     os.makedirs(member_path)
-    #     stats = {
-    #         'training_losses': training_losses,
-    #         'validation_losses': validation_losses,
-    #         'validation_accuracies': validation_accuracies
-    #     }
-    #     with open(os.path.join(member_path, 'train_stats.json'), 'w') as fd:
-    #         json.dump(stats, fd, indent=4)
-    #     model_save_path = os.path.join(member_path, 'model.npz')
-    #     np.savez(
-    #         model_save_path,
-    #         *get_all_param_values(model.final_layer)
-    #     )
-    #     model_hash = md5(model_save_path)
-    #     model_hash_path = os.path.join(member_path, 'model_hash.txt')
-    #     with open(model_hash_path, 'w') as fd:
-    #         fd.write(model_hash + '\n')
-
-    # ensemble_accuracies = {}
-    # for num_models in range(1, args.num_individuals + 1):
-    #     parameter_combinations = combinations(
-    #         trained_parameters, num_models
-    #     )
-    #     validation_accuracies = [
-    #         ensemble_prediction(parameter_combination)
-    #         for parameter_combination in parameter_combinations
-    #     ]
-    #     ensemble_accuracies[num_models] = {
-    #         'mean': np.mean(validation_accuracies),
-    #         'std': np.std(validation_accuracies),
-    #         'raw': validation_accuracies
-    #     }
-    # results_path = os.path.join(experiment_path, 'results.json')
-    # with open(results_path, 'w') as fd:
-    #     json.dump(ensemble_accuracies, fd, indent=4)
+            member_path = os.path.join(
+                path_for_lambda, 'ensemble_{}'.format(num_individuals))
+            os.makedirs(member_path)
+            stats = {
+                'training_losses': training_losses,
+                'validation_losses': validation_losses,
+                'validation_accuracies': validation_accuracies
+            }
+            stats_path = os.path.join(member_path, 'train_stats.json')
+            with open(stats_path, 'w') as fd:
+                json.dump(stats, fd, indent=4)
+            model_save_path = os.path.join(member_path, 'model.npz')
+            np.savez(
+                model_save_path,
+                *get_all_param_values(model.final_layer)
+            )
+            model_hash = md5(model_save_path)
+            model_hash_path = os.path.join(member_path, 'model_hash.txt')
+            with open(model_hash_path, 'w') as fd:
+                fd.write(model_hash + '\n')
 
 
 if __name__ == '__main__':
