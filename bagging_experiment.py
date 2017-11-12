@@ -4,7 +4,7 @@ from lasagne.layers import (
 from lasagne.objectives import categorical_crossentropy, categorical_accuracy
 from lasagne.updates import adam
 
-from util import load_mean, load_data, train_val_split, make_ens_predictor
+from util import load_mean, load_data, train_val_split, make_ens_predictor, md5
 
 from theano import tensor as T
 import theano
@@ -185,17 +185,6 @@ def make_training_function(
             validation_losses, validation_accuracies
         )
     return train_network
-
-
-# From https://stackoverflow.com/questions/3431825/ ...
-# generating-an-md5-checksum-of-a-file
-def md5(filename):
-    from hashlib import md5
-    hash_md5 = md5()
-    with open(filename, 'rb') as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hash_md5.update(chunk)
-    return hash_md5.hexdigest()
 
 
 def main():

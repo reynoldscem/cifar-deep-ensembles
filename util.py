@@ -6,6 +6,17 @@ import theano
 import os
 
 
+# From https://stackoverflow.com/questions/3431825/ ...
+# generating-an-md5-checksum-of-a-file
+def md5(filename):
+    from hashlib import md5
+    hash_md5 = md5()
+    with open(filename, 'rb') as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+
 def load_data(
         dataset_directory, dataset_mean,
         mean_normalise=True, four_dim=True):
