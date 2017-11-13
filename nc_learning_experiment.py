@@ -27,15 +27,16 @@ from lasagne.layers import ElemwiseSumLayer, ExpressionLayer
 
 
 class NCEnsemble():
+    eps = np.array(1e-8, dtype=theano.config.floatX)
 
     @staticmethod
-    def geometric_mean(
-            incoming,
-            eps=np.array(1e-8, dtype=theano.config.floatX)):
+    def geometric_mean(incoming):
         exp_out = ExpressionLayer(
             ElemwiseSumLayer(
                 [
-                    ExpressionLayer(member, lambda x: T.log(x + eps))
+                    ExpressionLayer(
+                        member, lambda x: T.log(x + NCEnsemble.eps)
+                    )
                     for member in incoming
                 ],
                 coeffs=1./len(incoming)
@@ -45,16 +46,28 @@ class NCEnsemble():
         Z = T.sum(get_output(exp_out), axis=1)[..., np.newaxis]
         return ExpressionLayer(exp_out, lambda x: x / Z)
 
-    def get_loss(self, target, lbd):
+    @staticmethod
+    def kl_divergence(p, q):
+        eps = NCEnsemble.eps
+
+        return T.sum(
+            p * (
+                T.log(p + eps) - T.log(q + eps)
+            ),
+            axis=1
+        )
+
+    def get_loss(self, target, lbd, n_classes):
         members = [
             self.ensemble['individual_{}'.format(index)]
             for index in range(self.num_individuals)
         ]
+        target_1hot = T.extra_ops.to_one_hot(target, n_classes)
         error_term = T.mean(
             [
-                categorical_crossentropy(
-                    get_output(member.network['output']),
-                    target
+                self.kl_divergence(
+                    target_1hot,
+                    get_output(member.network['output'])
                 )
                 for member in members
             ],
@@ -62,15 +75,15 @@ class NCEnsemble():
         )
         diversity_term = T.mean(
             [
-                categorical_crossentropy(
-                    get_output(member.network['output']),
-                    get_output(self.ensemble['p_bar'])
+                self.kl_divergence(
+                    get_output(self.ensemble['p_bar']),
+                    get_output(member.network['output'])
                 )
                 for member in members
             ],
             axis=0
         )
-        loss = error_term + lbd * diversity_term
+        loss = error_term - lbd * diversity_term
 
         return loss
 
@@ -161,7 +174,7 @@ def make_training_function(
             train_X, train_y,
             print_train_info=True, plot_figures=True):
 
-        n_chunks = 100
+        n_chunks = 450
         train_chunks = list(zip(
             np.split(train_X, n_chunks),
             np.split(train_y, n_chunks)
@@ -290,10 +303,11 @@ def main():
     input_var = T.tensor4('input', dtype=theano.config.floatX)
     target = T.vector('target', dtype='int32')
 
-    for lbd_val in np.linspace(0., 1., 11):
+    for lbd_val in np.linspace(0., 1., 6):
         path_for_lambda = os.path.join(
             experiment_path, '{:.2f}'.format(lbd_val))
         os.makedirs(path_for_lambda)
+        print('Lambda of {:.2f}'.format(lbd_val))
         for num_individuals in range(1, args.num_individuals + 1):
             network_kwargs = {
                 'input_var': input_var,
@@ -304,9 +318,12 @@ def main():
 
             network = model.network
             prediction = get_output(network['output'])
+
+            # TODO Remove hardcoded number of classes.
             loss = model.get_loss(
                 target,
-                np.array(lbd_val, dtype=theano.config.floatX)
+                np.array(lbd_val, dtype=theano.config.floatX),
+                10
             ).mean()
             accuracy = np.array(100., dtype=theano.config.floatX) * (
                 categorical_accuracy(prediction, target).mean())
